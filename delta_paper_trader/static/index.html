@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Delta Paper Momentum Trader</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <!-- Premium background glowing gradients -->
+    <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div>
+
+    <header class="topbar">
+      <div class="logo-area">
+        <div class="status-indicator">
+          <span class="pulse-dot" id="status-dot"></span>
+        </div>
+        <div>
+          <h1>Delta exchange <span>momentum paper trader</span></h1>
+          <p id="fee-note">Market paper fills use taker fees by default.</p>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="start-btn" class="primary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          Start Engine
+        </button>
+        <button id="stop-btn" class="danger">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect></svg>
+          Stop Engine
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <!-- Premium Overview Statistics Section -->
+      <section class="summary">
+        <div class="stat-card">
+          <div class="stat-icon status-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          </div>
+          <div>
+            <span>Engine Status</span>
+            <strong id="engine-status">Stopped</strong>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon time-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+          </div>
+          <div>
+            <span>Started At</span>
+            <strong id="started-at">-</strong>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon pnl-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+          </div>
+          <div>
+            <span>Total Portfolio PnL</span>
+            <strong id="total-portfolio-pnl">$0.00</strong>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon fee-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+          </div>
+          <div>
+            <span>Total Fees & GST Paid</span>
+            <strong id="total-fees-gst">$0.00 <small id="gst-breakdown">(GST: $0.00)</small></strong>
+          </div>
+        </div>
+      </section>
+
+      <!-- Connection Error Alert banner -->
+      <div id="error-banner" class="alert-banner" style="display: none;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+        <span id="last-error">No error</span>
+      </div>
+
+      <section class="workspace">
+        <form id="strategy-form" class="panel">
+          <div class="panel-head">
+            <h2>Configure & Add Strategy</h2>
+            <p class="muted">Deploy a mock strategy to stream paper orders</p>
+          </div>
+          <div class="input-group">
+            <label>Strategy Name</label>
+            <input name="name" value="BTC Momentum" required />
+          </div>
+          <div class="grid">
+            <div class="input-group">
+              <label>Strategy Type</label>
+              <select name="strategy_type" id="strategy-type"></select>
+            </div>
+            <div class="input-group">
+              <label>Symbols <span class="tip">(Comma separated)</span></label>
+              <input name="symbols" value="BTCUSD" required />
+            </div>
+          </div>
+          <div class="grid">
+            <div class="input-group">
+              <label>Capital ($)</label>
+              <input name="capital" type="number" step="0.01" value="10000" required />
+            </div>
+            <div class="input-group">
+              <label>Quantity per trade</label>
+              <input name="quantity" type="number" step="0.01" value="1" required />
+            </div>
+          </div>
+          <div class="grid">
+            <div class="input-group">
+              <label>Max absolute Position</label>
+              <input name="max_position" type="number" step="0.01" value="3" required />
+            </div>
+            <div class="input-group">
+              <label>Broker fee (bps)</label>
+              <input name="fee_bps" type="number" step="0.01" value="5" required />
+            </div>
+          </div>
+          
+          <!-- Risk Management inputs (SL/Target/Trailing SL) -->
+          <div class="divider">
+            <span>Risk Management (SL & Target)</span>
+          </div>
+          <div class="grid grid-3">
+            <div class="input-group">
+              <label>Stop Loss (%)</label>
+              <input name="sl_pct" type="number" step="0.01" value="0" min="0" />
+              <span class="subtext">0 to disable</span>
+            </div>
+            <div class="input-group">
+              <label>Profit Target (%)</label>
+              <input name="target_pct" type="number" step="0.01" value="0" min="0" />
+              <span class="subtext">0 to disable</span>
+            </div>
+            <div class="input-group">
+              <label>Trailing SL (%)</label>
+              <input name="trailing_sl_pct" type="number" step="0.01" value="0" min="0" />
+              <span class="subtext">0 to disable</span>
+            </div>
+          </div>
+          
+          <div class="input-group">
+            <label>Strategy Hyperparameters (JSON)</label>
+            <textarea name="params" rows="3">{"fast_window": 8, "slow_window": 21}</textarea>
+          </div>
+          <button class="primary submit-btn" type="submit">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            Add Strategy Configuration
+          </button>
+        </form>
+
+        <section class="live-panel">
+          <div class="section-title">
+            <div class="title-left">
+              <h2>Running Trading Strategies</h2>
+              <p class="muted">Real-time matching engine performance</p>
+            </div>
+            <button id="refresh-btn" class="btn-secondary">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              Sync Dashboard
+            </button>
+          </div>
+          <div id="strategies" class="strategy-list"></div>
+        </section>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Delta Exchange Paper Trader Dashboard · Integrated with 18% GST on trading fees</p>
+    </footer>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
