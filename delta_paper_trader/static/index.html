@@ -84,6 +84,7 @@
       </div>
 
       <section class="workspace">
+        <aside class="side-stack">
         <form id="strategy-form" class="panel">
           <div class="panel-head">
             <h2>Configure & Add Strategy</h2>
@@ -156,7 +157,49 @@
           </button>
         </form>
 
+        <section class="panel backtest-panel">
+          <div class="panel-head">
+            <h2>Backtest Replay</h2>
+            <p class="muted">Paste candle JSON to replay a strategy offline</p>
+          </div>
+          <form id="backtest-form">
+            <div class="grid">
+              <div class="input-group">
+                <label>Strategy Type</label>
+                <select name="strategy_type" id="backtest-strategy-type"></select>
+              </div>
+              <div class="input-group">
+                <label>Quantity</label>
+                <input name="quantity" type="number" step="0.01" value="1" required />
+              </div>
+            </div>
+            <div class="input-group">
+              <label>Backtest Params (JSON)</label>
+              <textarea name="params" rows="2">{"fast_window": 8, "slow_window": 21}</textarea>
+            </div>
+            <div class="input-group">
+              <label>Candles (JSON array)</label>
+              <textarea name="candles" rows="5" placeholder='[{"symbol":"BTCUSD","start":"2026-01-01T00:00:00Z","open":"100","high":"103","low":"99","close":"102","volume":"10"}]'></textarea>
+            </div>
+            <button class="btn-secondary submit-btn" type="submit">Run Replay</button>
+          </form>
+          <div id="backtest-result" class="backtest-result"></div>
+          <canvas id="backtest-chart" height="180"></canvas>
+        </section>
+        </aside>
+
         <section class="live-panel">
+          <section class="chart-panel">
+            <div class="section-title compact">
+              <div class="title-left">
+                <h2>Live Market Chart</h2>
+                <p class="muted">Closed and active 1m candles from the running feed</p>
+              </div>
+              <select id="chart-symbol" class="chart-select" aria-label="Chart symbol"></select>
+            </div>
+            <canvas id="market-chart" height="260"></canvas>
+          </section>
+
           <div class="section-title">
             <div class="title-left">
               <h2>Running Trading Strategies</h2>

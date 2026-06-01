@@ -1,6 +1,7 @@
 const state = {
   catalog: [],
   status: null,
+  chartSymbol: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -41,9 +42,11 @@ function pnlClass(value) {
 
 function renderCatalog() {
   const select = $("#strategy-type");
-  select.innerHTML = state.catalog
+  const options = state.catalog
     .map((item) => `<option value="${item.code}">${item.name}</option>`)
     .join("");
+  select.innerHTML = options;
+  $("#backtest-strategy-type").innerHTML = options;
 }
 
 function updateAggregates() {
@@ -117,6 +120,186 @@ function renderStatus() {
        </div>`;
 
   updateAggregates();
+  renderMarketChart();
+}
+
+function renderMarketChart() {
+  const status = state.status;
+  const select = $("#chart-symbol");
+  const canvas = $("#market-chart");
+  if (!status || !select || !canvas) return;
+
+  const symbols = Array.from(new Set([
+    ...Object.keys(status.closed_candles || {}),
+    ...Object.keys(status.active_candles || {}),
+    ...(status.strategies || []).flatMap((strategy) => strategy.symbols || []),
+  ])).sort();
+
+  if (!symbols.length) {
+    drawEmptyChart(canvas, "Waiting for symbols");
+    select.innerHTML = "";
+    return;
+  }
+
+  if (!state.chartSymbol || !symbols.includes(state.chartSymbol)) {
+    state.chartSymbol = symbols[0];
+  }
+
+  select.innerHTML = symbols
+    .map((symbol) => `<option value="${symbol}" ${symbol === state.chartSymbol ? "selected" : ""}>${symbol}</option>`)
+    .join("");
+
+  const closed = (status.closed_candles || {})[state.chartSymbol] || [];
+  const active = (status.active_candles || {})[state.chartSymbol];
+  const candles = active ? [...closed, active] : closed;
+  drawCandleChart(canvas, candles, state.chartSymbol);
+}
+
+function drawEmptyChart(canvas, message) {
+  const ctx = prepareCanvas(canvas);
+  ctx.fillStyle = "rgba(15, 23, 42, 0.25)";
+  ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+  ctx.fillStyle = "#64748b";
+  ctx.font = "13px Inter, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(message, canvas.clientWidth / 2, canvas.clientHeight / 2);
+}
+
+function drawCandleChart(canvas, candles, symbol) {
+  if (!candles.length) {
+    drawEmptyChart(canvas, `Waiting for ${symbol} candles`);
+    return;
+  }
+
+  const ctx = prepareCanvas(canvas);
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  const pad = { top: 18, right: 58, bottom: 30, left: 12 };
+  const plotWidth = width - pad.left - pad.right;
+  const plotHeight = height - pad.top - pad.bottom;
+  const values = candles.flatMap((candle) => [Number(candle.high), Number(candle.low)]).filter(Number.isFinite);
+  const minPrice = Math.min(...values);
+  const maxPrice = Math.max(...values);
+  const priceRange = Math.max(maxPrice - minPrice, maxPrice * 0.001, 1);
+  const y = (price) => pad.top + ((maxPrice - price) / priceRange) * plotHeight;
+  const slot = plotWidth / candles.length;
+  const bodyWidth = Math.max(3, Math.min(14, slot * 0.58));
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "rgba(15, 23, 42, 0.25)";
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.055)";
+  ctx.lineWidth = 1;
+  ctx.fillStyle = "#64748b";
+  ctx.font = "11px Inter, sans-serif";
+  ctx.textAlign = "right";
+  for (let i = 0; i <= 4; i += 1) {
+    const lineY = pad.top + (plotHeight / 4) * i;
+    const price = maxPrice - (priceRange / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(pad.left, lineY);
+    ctx.lineTo(width - pad.right + 6, lineY);
+    ctx.stroke();
+    ctx.fillText(money(price, price > 1000 ? 0 : 2), width - 10, lineY + 4);
+  }
+
+  candles.forEach((candle, index) => {
+    const open = Number(candle.open);
+    const close = Number(candle.close);
+    const high = Number(candle.high);
+    const low = Number(candle.low);
+    const x = pad.left + slot * index + slot / 2;
+    const up = close >= open;
+    const color = up ? "#10b981" : "#f43f5e";
+    const top = y(Math.max(open, close));
+    const bottom = y(Math.min(open, close));
+    const bodyHeight = Math.max(2, bottom - top);
+
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x, y(high));
+    ctx.lineTo(x, y(low));
+    ctx.stroke();
+    ctx.fillRect(x - bodyWidth / 2, top, bodyWidth, bodyHeight);
+  });
+
+  const last = candles[candles.length - 1];
+  ctx.fillStyle = "#e2e8f0";
+  ctx.font = "600 12px Outfit, sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText(`${symbol} 1m`, pad.left + 4, 16);
+  ctx.fillStyle = Number(last.close) >= Number(last.open) ? "#10b981" : "#f43f5e";
+  ctx.textAlign = "right";
+  ctx.fillText(`Last ${money(last.close)}`, width - 10, 16);
+}
+
+function prepareCanvas(canvas) {
+  const ratio = window.devicePixelRatio || 1;
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  if (canvas.width !== Math.floor(width * ratio) || canvas.height !== Math.floor(height * ratio)) {
+    canvas.width = Math.floor(width * ratio);
+    canvas.height = Math.floor(height * ratio);
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  return ctx;
+}
+
+function drawLineChart(canvas, points, label) {
+  canvas.style.display = "block";
+  if (!points.length) {
+    drawEmptyChart(canvas, "No replay points");
+    return;
+  }
+
+  const ctx = prepareCanvas(canvas);
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  const pad = { top: 18, right: 12, bottom: 24, left: 46 };
+  const plotWidth = width - pad.left - pad.right;
+  const plotHeight = height - pad.top - pad.bottom;
+  const values = points.map((point) => Number(point.equity)).filter(Number.isFinite);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = Math.max(max - min, max * 0.001, 1);
+  const x = (index) => pad.left + (points.length === 1 ? plotWidth : (plotWidth / (points.length - 1)) * index);
+  const y = (value) => pad.top + ((max - value) / range) * plotHeight;
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "rgba(15, 23, 42, 0.25)";
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.055)";
+  ctx.fillStyle = "#64748b";
+  ctx.font = "11px Inter, sans-serif";
+  ctx.textAlign = "right";
+  for (let i = 0; i <= 3; i += 1) {
+    const lineY = pad.top + (plotHeight / 3) * i;
+    const value = max - (range / 3) * i;
+    ctx.beginPath();
+    ctx.moveTo(pad.left, lineY);
+    ctx.lineTo(width - pad.right, lineY);
+    ctx.stroke();
+    ctx.fillText(money(value), pad.left - 6, lineY + 4);
+  }
+
+  ctx.strokeStyle = "#3b82f6";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  points.forEach((point, index) => {
+    const pointX = x(index);
+    const pointY = y(Number(point.equity));
+    if (index === 0) ctx.moveTo(pointX, pointY);
+    else ctx.lineTo(pointX, pointY);
+  });
+  ctx.stroke();
+
+  ctx.fillStyle = "#e2e8f0";
+  ctx.font = "600 12px Outfit, sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText(label, pad.left, 15);
 }
 
 function renderStrategy(strategy) {
@@ -322,6 +505,11 @@ $("#stop-btn").addEventListener("click", async () => {
 
 $("#refresh-btn").addEventListener("click", refresh);
 
+$("#chart-symbol").addEventListener("change", (event) => {
+  state.chartSymbol = event.target.value;
+  renderMarketChart();
+});
+
 $("#strategy-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
@@ -357,6 +545,51 @@ $("#strategy-form").addEventListener("submit", async (event) => {
     alert(`Failed to add strategy: ${error.message}`);
   }
 });
+
+$("#backtest-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  let params = {};
+  let candles = [];
+  try {
+    params = JSON.parse(form.get("params") || "{}");
+    candles = JSON.parse(form.get("candles") || "[]");
+  } catch (error) {
+    alert(`Backtest JSON is invalid: ${error.message}`);
+    return;
+  }
+
+  try {
+    const result = await api("/api/backtest", {
+      method: "POST",
+      body: JSON.stringify({
+        strategy_type: form.get("strategy_type"),
+        quantity: form.get("quantity"),
+        params,
+        candles,
+      }),
+    });
+    renderBacktestResult(result);
+  } catch (error) {
+    alert(`Backtest failed: ${error.message}`);
+  }
+});
+
+function renderBacktestResult(result) {
+  const summary = result.summary || {};
+  $("#backtest-result").innerHTML = [
+    ["Final Equity", `$${money(summary.final_equity)}`],
+    ["Return", `${Number(summary.total_return_pct || 0).toFixed(2)}%`],
+    ["Max DD", `${Number(summary.max_drawdown || 0).toFixed(2)}%`],
+    ["Fills", summary.fills || "0"],
+  ].map(([label, value]) => `
+    <div class="backtest-metric">
+      <span>${label}</span>
+      <strong>${value}</strong>
+    </div>
+  `).join("");
+  drawLineChart($("#backtest-chart"), result.equity_curve || [], "Replay equity");
+}
 
 $("#strategies").addEventListener("click", async (event) => {
   const toggleBtn = event.target.closest("[data-toggle]");

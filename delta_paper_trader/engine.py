@@ -11,6 +11,7 @@ from delta_paper_trader.broker import PaperBroker
 from delta_paper_trader.candles import CandleAggregator
 from delta_paper_trader.delta_ws import DeltaPublicStream
 from delta_paper_trader.models import Candle, Fill, Position, Quote
+from delta_paper_trader.persistence import SQLiteTradeStore
 from delta_paper_trader.strategy import build_strategy, strategy_catalog
 
 
@@ -51,10 +52,12 @@ class PaperTradingEngine:
         url: str = "wss://public-socket.india.delta.exchange",
         channel: str = "ob_l1",
         timeframe_seconds: int = 60,
+        db_path: str = "delta_paper_trader.sqlite3",
     ) -> None:
         self.url = url
         self.channel = channel
         self.timeframe_seconds = timeframe_seconds
+        self.store = SQLiteTradeStore(db_path)
         self.configs: dict[str, StrategyConfig] = {}
         self.running: dict[str, RunningStrategy] = {}
         self.last_quotes: dict[str, Quote] = {}
@@ -64,21 +67,29 @@ class PaperTradingEngine:
         self.started_at: datetime | None = None
         self._task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
-        self.seed_defaults()
+        self._load_or_seed_configs()
 
     @property
     def is_running(self) -> bool:
         return self._task is not None and not self._task.done()
 
+    def _load_or_seed_configs(self) -> None:
+        for payload in self.store.load_strategy_configs():
+            config = self._config_from_payload(payload)
+            self.configs[config.id] = config
+        self.seed_defaults()
+
     def seed_defaults(self) -> None:
         if self.configs:
             return
         for strategy_type, name, capital, sl, target, trailing, params in [
-            ("ma_cross", "BTC MA Cross", "10000", "1.5", "3.0", "0.0", {"fast_window": 8, "slow_window": 21}),
-            ("breakout", "BTC Breakout", "10000", "1.0", "0.0", "2.0", {"lookback": 30}),
-            ("ema_impulse", "ETH EMA Impulse", "10000", "2.0", "4.0", "0.0", {"fast_span": 8, "slow_span": 21, "min_spread_bps": "2"}),
-            ("rsi_momentum", "ETH RSI Momentum", "10000", "1.5", "3.0", "0.0", {"period": 14, "long_threshold": "60", "short_threshold": "40"}),
-            ("vwap_momentum", "BTC VWAP Momentum", "10000", "1.0", "0.0", "1.5", {"window": 50, "min_distance_bps": "3"}),
+        #     ("ma_cross", "BTC MA Cross", "10000", "1.5", "3.0", "0.0", {"fast_window": 8, "slow_window": 21}),
+        #     ("breakout", "BTC Breakout", "10000", "1.0", "0.0", "2.0", {"lookback": 30}),
+        #     ("ema_impulse", "ETH EMA Impulse", "10000", "2.0", "4.0", "0.0", {"fast_span": 8, "slow_span": 21, "min_spread_bps": "2"}),
+        #     ("rsi_momentum", "ETH RSI Momentum", "10000", "1.5", "3.0", "0.0", {"period": 14, "long_threshold": "60", "short_threshold": "40"}),
+        #     ("vwap_momentum", "BTC VWAP Momentum", "10000", "1.0", "0.0", "1.5", {"window": 50, "min_distance_bps": "3"}),
+        # 
+                ("ema9_100_pullback", "EMA 9_100 Pullback", "100000", "0.5", "3.0", "0.2", {"fast_window": 9, "slow_window": 100}),
         ]:
             symbols = ["ETHUSD"] if name.startswith("ETH") else ["BTCUSD"]
             self.add_strategy(
@@ -95,7 +106,19 @@ class PaperTradingEngine:
             )
 
     def add_strategy(self, payload: dict[str, Any]) -> StrategyConfig:
-        config = StrategyConfig(
+        config = self._config_from_payload(payload)
+        self.configs[config.id] = config
+        self.store.save_strategy_config(_config_to_dict(config))
+        if self.is_running and config.enabled:
+            self.running[config.id] = self._build_running_strategy(config)
+            self.store.save_broker(config.id, self.running[config.id].broker)
+        else:
+            self.running.pop(config.id, None)
+        return config
+
+    @staticmethod
+    def _config_from_payload(payload: dict[str, Any]) -> StrategyConfig:
+        return StrategyConfig(
             id=payload.get("id") or uuid.uuid4().hex[:10],
             name=payload.get("name") or "Momentum strategy",
             strategy_type=payload.get("strategy_type") or "ma_cross",
@@ -111,12 +134,6 @@ class PaperTradingEngine:
             trailing_sl_pct=_decimal(payload.get("trailing_sl_pct", "0")),
             params=_normalize_params(payload.get("params") or {}),
         )
-        self.configs[config.id] = config
-        if self.is_running and config.enabled:
-            self.running[config.id] = self._build_running_strategy(config)
-        else:
-            self.running.pop(config.id, None)
-        return config
 
     async def update_strategy(self, strategy_id: str, payload: dict[str, Any]) -> StrategyConfig:
         async with self._lock:
@@ -131,8 +148,10 @@ class PaperTradingEngine:
                     setattr(config, key, _decimal(payload[key]))
             if "params" in payload:
                 config.params = _normalize_params(payload["params"] or {})
+            self.store.save_strategy_config(_config_to_dict(config))
             if self.is_running and config.enabled:
                 self.running[strategy_id] = self._build_running_strategy(config)
+                self.store.save_broker(strategy_id, self.running[strategy_id].broker)
             elif self.is_running:
                 self.running.pop(strategy_id, None)
             else:
@@ -143,6 +162,7 @@ class PaperTradingEngine:
         async with self._lock:
             self.configs.pop(strategy_id, None)
             self.running.pop(strategy_id, None)
+            self.store.delete_strategy(strategy_id)
 
     async def start(self, symbols: list[str] | None = None) -> None:
         async with self._lock:
@@ -194,25 +214,33 @@ class PaperTradingEngine:
                 item.broker.mark(quote)
                 if closed_candle is None:
                     item.last_signal = "building_1m_candle"
+                    self.store.save_broker(item.config.id, item.broker)
                     continue
                 self._store_candle(closed_candle)
                 signal = item.strategy.on_candle(closed_candle, item.broker)
                 item.last_signal = signal.reason
                 item.broker.execute_signal(quote, signal)
+                self.store.save_broker(item.config.id, item.broker)
 
     def _enabled_symbols(self) -> list[str]:
         return [symbol for config in self.configs.values() if config.enabled for symbol in config.symbols]
 
-    @staticmethod
-    def _build_running_strategy(config: StrategyConfig) -> RunningStrategy:
+    def _build_running_strategy(self, config: StrategyConfig) -> RunningStrategy:
+        broker = self.store.load_broker(
+            config.id,
+            initial_balance=config.capital,
+            fee_bps=config.fee_bps,
+            slippage_bps=config.slippage_bps,
+            max_abs_position=config.max_position,
+        ) or PaperBroker(
+            initial_balance=config.capital,
+            fee_bps=config.fee_bps,
+            slippage_bps=config.slippage_bps,
+            max_abs_position=config.max_position,
+        )
         return RunningStrategy(
             config=config,
-            broker=PaperBroker(
-                initial_balance=config.capital,
-                fee_bps=config.fee_bps,
-                slippage_bps=config.slippage_bps,
-                max_abs_position=config.max_position,
-            ),
+            broker=broker,
             strategy=build_strategy(
                 config.strategy_type,
                 config.quantity,
@@ -253,7 +281,7 @@ class PaperTradingEngine:
 
     def _strategy_snapshot(self, config: StrategyConfig) -> dict[str, Any]:
         running = self.running.get(config.id)
-        broker = running.broker if running else None
+        broker = running.broker if running else self._load_snapshot_broker(config)
         return {
             **_config_to_dict(config),
             "running": running is not None,
@@ -264,6 +292,15 @@ class PaperTradingEngine:
             "positions": [_position_to_dict(position) for position in broker.positions.values()] if broker else [],
             "fills": [_fill_to_dict(fill) for fill in broker.fills[-25:]] if broker else [],
         }
+
+    def _load_snapshot_broker(self, config: StrategyConfig) -> PaperBroker | None:
+        return self.store.load_broker(
+            config.id,
+            initial_balance=config.capital,
+            fee_bps=config.fee_bps,
+            slippage_bps=config.slippage_bps,
+            max_abs_position=config.max_position,
+        )
 
     def _store_candle(self, candle: Candle) -> None:
         candles = self.closed_candles.setdefault(candle.symbol, [])

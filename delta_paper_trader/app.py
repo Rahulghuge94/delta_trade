@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from delta_paper_trader.backtest import run_backtest
 from delta_paper_trader.engine import PaperTradingEngine
 from delta_paper_trader.strategy import strategy_catalog
 
@@ -73,3 +74,11 @@ async def update_strategy(strategy_id: str, payload: dict[str, Any]) -> dict[str
 async def delete_strategy(strategy_id: str) -> dict[str, Any]:
     await engine.delete_strategy(strategy_id)
     return engine.snapshot()
+
+
+@app.post("/api/backtest")
+async def backtest(payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return run_backtest(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

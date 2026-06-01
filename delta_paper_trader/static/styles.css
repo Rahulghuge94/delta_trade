@@ -376,6 +376,12 @@ main {
   align-items: start;
 }
 
+.side-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
 @media (max-width: 1024px) {
   .workspace {
     grid-template-columns: 1fr;
@@ -500,6 +506,79 @@ textarea {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 1.5rem;
+}
+
+.section-title.compact {
+  margin-bottom: 1rem;
+}
+
+.chart-panel {
+  background: var(--bg-panel);
+  backdrop-filter: blur(12px) saturate(180%);
+  border: 1px solid var(--border-glass);
+  border-radius: 16px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.chart-select {
+  width: auto;
+  min-width: 130px;
+}
+
+#market-chart {
+  display: block;
+  width: 100%;
+  height: 260px;
+  background: rgba(15, 23, 42, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+}
+
+.backtest-panel form {
+  margin-bottom: 1rem;
+}
+
+.backtest-result {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.backtest-result:empty {
+  display: none;
+}
+
+.backtest-metric {
+  background: rgba(15, 23, 42, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+}
+
+.backtest-metric span {
+  display: block;
+  color: var(--color-muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.backtest-metric strong {
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+}
+
+#backtest-chart {
+  display: none;
+  width: 100%;
+  height: 180px;
+  background: rgba(15, 23, 42, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
 }
 
 .strategy-list {
