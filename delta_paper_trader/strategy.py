@@ -268,12 +268,129 @@ class VwapMomentumStrategy(Strategy):
         return _flip_signal(broker, candle, Side.SELL, self.trade_quantity, f"price below rolling_vwap {vwap}")
 
 
+@dataclass
+class Ema9_100PullbackStrategy(Strategy):
+    """1-minute EMA 9 / EMA 100 pullback strategy.
+
+    Trend filter:
+    - Long  bias: EMA 9 > EMA 100
+    - Short bias: EMA 9 < EMA 100
+
+    Entry (short example):
+    1. EMA 9 is below EMA 100 (trend confirmed bearish).
+    2. Price pulls back up into the EMA 9 ± pullback_band_bps zone.
+    3. The current candle closes *below* EMA 9 (bearish rejection confirmed).
+    4. EMA 9 spread vs EMA 100 exceeds min_trend_bps (trend has meaningful separation,
+       not a flat/choppy cross).
+
+    The same logic applies symmetrically for longs.
+
+    Exits are handled by the base-class sl_pct / target_pct / trailing_sl_pct
+    mechanism so the strategy integrates seamlessly with the existing risk
+    management layer.  Recommended defaults when calling build_strategy:
+        sl_pct=0.37          (~$270 buffer above EMA 100 on a $73k BTC price)
+        target_pct=0.55      (TP1 ~1× risk; ride remainder with trailing_sl_pct)
+        trailing_sl_pct=0.18 (trails the best price once TP1 zone is cleared)
+    """
+
+    code = "ema9_100_pullback"
+    display_name = "EMA 9/100 pullback"
+    description = (
+        "Waits for a pullback to EMA 9 in the direction confirmed by EMA 100, "
+        "then enters on a rejection close. Trend, band, and spread filters raise win rate."
+    )
+
+    trade_quantity: Decimal = Decimal("1")
+    # ── EMA spans ────────────────────────────────────────────────────────────
+    fast_span: int = 9
+    slow_span: int = 100
+    # ── Entry filters ────────────────────────────────────────────────────────
+    # How close price must be to EMA 9 to qualify as a "pullback" (basis points
+    # of the current close price).  80 bps ≈ $58 on a $72 700 BTC price.
+    pullback_band_bps: Decimal = Decimal("80")
+    # Minimum separation between EMA 9 and EMA 100 expressed in bps of close.
+    # Avoids entering during flat/sideways markets where both EMAs are tangled.
+    min_trend_bps: Decimal = Decimal("10")
+    # ── Internal state ───────────────────────────────────────────────────────
+    ema_fast: dict[str, Decimal] = field(default_factory=dict)
+    ema_slow: dict[str, Decimal] = field(default_factory=dict)
+    # Previous candle close — used for the "consecutive red/green" rejection check.
+    prev_close: dict[str, Decimal] = field(default_factory=dict)
+    last_bias: dict[str, str] = field(default_factory=dict)
+
+    # ── EMA helper ───────────────────────────────────────────────────────────
+    @staticmethod
+    def _ema(previous: Decimal | None, price: Decimal, span: int) -> Decimal:
+        if previous is None:
+            return price
+        alpha = Decimal("2") / Decimal(span + 1)
+        return (price * alpha) + (previous * (Decimal("1") - alpha))
+
+    # ── Core signal logic ────────────────────────────────────────────────────
+    def generate_signal(self, candle: Candle, broker: PaperBroker) -> Signal:
+        sym = candle.symbol
+
+        # ── 1. Update EMAs ───────────────────────────────────────────────────
+        ema9 = self._ema(self.ema_fast.get(sym), candle.close, self.fast_span)
+        ema100 = self._ema(self.ema_slow.get(sym), candle.close, self.slow_span)
+        self.ema_fast[sym] = ema9
+        self.ema_slow[sym] = ema100
+
+        prev = self.prev_close.get(sym)
+        self.prev_close[sym] = candle.close
+
+        # Need at least one prior close to confirm rejection direction.
+        if prev is None:
+            return Signal.hold("warming_up")
+
+        # ── 2. Trend filter — EMA 9 vs EMA 100 ──────────────────────────────
+        spread_bps = ((ema9 - ema100) / candle.close) * Decimal("10000")
+        trend_bps_abs = abs(spread_bps)
+        if trend_bps_abs < self.min_trend_bps:
+            return Signal.hold("trend_not_established")
+
+        trend_bias = "long" if spread_bps > 0 else "short"
+
+        # ── 3. Pullback filter — price within band of EMA 9 ─────────────────
+        distance_bps = abs((candle.close - ema9) / candle.close) * Decimal("10000")
+        if distance_bps > self.pullback_band_bps:
+            return Signal.hold("price_not_at_ema9")
+
+        # ── 4. Rejection candle filter ───────────────────────────────────────
+        # Short setup: candle must close below EMA 9 (bearish rejection).
+        # Long  setup: candle must close above EMA 9 (bullish reclaim).
+        if trend_bias == "short" and candle.close >= ema9:
+            return Signal.hold("no_bearish_rejection")
+        if trend_bias == "long" and candle.close <= ema9:
+            return Signal.hold("no_bullish_reclaim")
+
+        # ── 5. Deduplicate — only act on bias changes ────────────────────────
+        if trend_bias == self.last_bias.get(sym):
+            return Signal.hold("bias_unchanged")
+        self.last_bias[sym] = trend_bias
+
+        # ── 6. Emit signal ───────────────────────────────────────────────────
+        reason = (
+            f"ema9={ema9:.2f} ema100={ema100:.2f} "
+            f"spread_bps={spread_bps:.1f} dist_bps={distance_bps:.1f}"
+        )
+        if trend_bias == "short":
+            return _flip_signal(
+                broker, candle, Side.SELL, self.trade_quantity,
+                f"pullback_rejection_short {reason}",
+            )
+        return _flip_signal(
+            broker, candle, Side.BUY, self.trade_quantity,
+            f"pullback_reclaim_long {reason}",
+        )
+
 STRATEGY_TYPES: dict[str, type[Strategy]] = {
     MovingAverageCrossStrategy.code: MovingAverageCrossStrategy,
     BreakoutMomentumStrategy.code: BreakoutMomentumStrategy,
     EmaImpulseStrategy.code: EmaImpulseStrategy,
     RsiMomentumStrategy.code: RsiMomentumStrategy,
     VwapMomentumStrategy.code: VwapMomentumStrategy,
+    Ema9_100PullbackStrategy.code: Ema9_100PullbackStrategy,
 }
 
 
