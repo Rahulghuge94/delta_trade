@@ -2,6 +2,8 @@ const state = {
   catalog: [],
   status: null,
   chartSymbol: null,
+  chart: null,  // TradingView Lightweight Chart instance
+  candleSeries: null,  // Candlestick series
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -38,6 +40,104 @@ function pnlClass(value) {
   if (number > 0) return "positive-glow";
   if (number < 0) return "negative-glow";
   return "";
+}
+
+// ── Time Utilities ───────────────────────────────────────────────────────────
+function toIST(isoString) {
+  const date = new Date(isoString);
+  return date.toLocaleString('en-IN', { 
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+}
+
+function unixToIST(unixTimestamp) {
+  return toIST(new Date(unixTimestamp * 1000).toISOString());
+}
+
+// ── TradingView Lightweight Charts Utilities ─────────────────────────────────
+function initChart() {
+  if (!window.LightweightCharts) {
+    console.warn("TradingView Lightweight Charts not loaded");
+    return null;
+  }
+
+  const container = $("#market-chart-container");
+  if (!container) return null;
+
+  try {
+    const chart = window.LightweightCharts.createChart(container, {
+      layout: {
+        background: { color: 'rgba(15, 23, 42, 0.25)' },
+        textColor: '#e2e8f0',
+      },
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      // grid: {
+      //   hStyle: window.LightweightCharts.GridLineStyle.Dotted,
+      //   vStyle: window.LightweightCharts.GridLineStyle.Dotted,
+      //   hColor: 'rgba(255, 255, 255, 0.1)',
+      //   vColor: 'rgba(255, 255, 255, 0.1)',
+      // },
+    });
+
+    const candleSeries = chart.addSeries(window.LightweightCharts.CandlestickSeries,{
+      upColor: '#10b981',
+      downColor: '#f43f5e',
+      borderUpColor: '#10b981',
+      borderDownColor: '#f43f5e',
+      wickUpColor: '#10b981',
+      wickDownColor: '#f43f5e',
+    });
+
+    state.chart = chart;
+    state.candleSeries = candleSeries;
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      if (state.chart && container) {
+        state.chart.applyOptions({
+          width: container.clientWidth,
+          height: container.clientHeight,
+        });
+      }
+    });
+
+    return { chart, candleSeries };
+  } catch (error) {
+    console.error("Failed to initialize TradingView chart:", error);
+    return null;
+  }
+}
+
+function updateChartWithCandles(candles) {
+  if (!state.candleSeries) return;
+
+  if (!candles || candles.length === 0) return;
+
+  // Convert candles to chart format with IST timestamps
+  const chartData = candles.map(candle => {
+    const date = new Date(candle.start);
+    const timestamp = Math.floor(date.getTime() / 1000);
+
+    return {
+      time: timestamp,
+      open: parseFloat(candle.open),
+      high: parseFloat(candle.high),
+      low: parseFloat(candle.low),
+      close: parseFloat(candle.close),
+    };
+  });
+
+  state.candleSeries.setData(chartData);
+  state.chart.timeScale().fitContent();
 }
 
 function renderCatalog() {
@@ -126,8 +226,13 @@ function renderStatus() {
 function renderMarketChart() {
   const status = state.status;
   const select = $("#chart-symbol");
-  const canvas = $("#market-chart");
-  if (!status || !select || !canvas) return;
+  
+  if (!status || !select) return;
+
+  // Initialize chart on first render
+  if (!state.chart) {
+    initChart();
+  }
 
   const symbols = Array.from(new Set([
     ...Object.keys(status.closed_candles || {}),
@@ -136,7 +241,6 @@ function renderMarketChart() {
   ])).sort();
 
   if (!symbols.length) {
-    drawEmptyChart(canvas, "Waiting for symbols");
     select.innerHTML = "";
     return;
   }
@@ -149,103 +253,14 @@ function renderMarketChart() {
     .map((symbol) => `<option value="${symbol}" ${symbol === state.chartSymbol ? "selected" : ""}>${symbol}</option>`)
     .join("");
 
+  // Update chart with current candles
   const closed = (status.closed_candles || {})[state.chartSymbol] || [];
   const active = (status.active_candles || {})[state.chartSymbol];
   const candles = active ? [...closed, active] : closed;
-  drawCandleChart(canvas, candles, state.chartSymbol);
-}
-
-function drawEmptyChart(canvas, message) {
-  const ctx = prepareCanvas(canvas);
-  ctx.fillStyle = "rgba(15, 23, 42, 0.25)";
-  ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-  ctx.fillStyle = "#64748b";
-  ctx.font = "13px Inter, sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText(message, canvas.clientWidth / 2, canvas.clientHeight / 2);
-}
-
-function drawCandleChart(canvas, candles, symbol) {
-  if (!candles.length) {
-    drawEmptyChart(canvas, `Waiting for ${symbol} candles`);
-    return;
+  
+  if (candles.length > 0 && state.candleSeries) {
+    updateChartWithCandles(candles);
   }
-
-  const ctx = prepareCanvas(canvas);
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  const pad = { top: 18, right: 58, bottom: 30, left: 12 };
-  const plotWidth = width - pad.left - pad.right;
-  const plotHeight = height - pad.top - pad.bottom;
-  const values = candles.flatMap((candle) => [Number(candle.high), Number(candle.low)]).filter(Number.isFinite);
-  const minPrice = Math.min(...values);
-  const maxPrice = Math.max(...values);
-  const priceRange = Math.max(maxPrice - minPrice, maxPrice * 0.001, 1);
-  const y = (price) => pad.top + ((maxPrice - price) / priceRange) * plotHeight;
-  const slot = plotWidth / candles.length;
-  const bodyWidth = Math.max(3, Math.min(14, slot * 0.58));
-
-  ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "rgba(15, 23, 42, 0.25)";
-  ctx.fillRect(0, 0, width, height);
-
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.055)";
-  ctx.lineWidth = 1;
-  ctx.fillStyle = "#64748b";
-  ctx.font = "11px Inter, sans-serif";
-  ctx.textAlign = "right";
-  for (let i = 0; i <= 4; i += 1) {
-    const lineY = pad.top + (plotHeight / 4) * i;
-    const price = maxPrice - (priceRange / 4) * i;
-    ctx.beginPath();
-    ctx.moveTo(pad.left, lineY);
-    ctx.lineTo(width - pad.right + 6, lineY);
-    ctx.stroke();
-    ctx.fillText(money(price, price > 1000 ? 0 : 2), width - 10, lineY + 4);
-  }
-
-  candles.forEach((candle, index) => {
-    const open = Number(candle.open);
-    const close = Number(candle.close);
-    const high = Number(candle.high);
-    const low = Number(candle.low);
-    const x = pad.left + slot * index + slot / 2;
-    const up = close >= open;
-    const color = up ? "#10b981" : "#f43f5e";
-    const top = y(Math.max(open, close));
-    const bottom = y(Math.min(open, close));
-    const bodyHeight = Math.max(2, bottom - top);
-
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.moveTo(x, y(high));
-    ctx.lineTo(x, y(low));
-    ctx.stroke();
-    ctx.fillRect(x - bodyWidth / 2, top, bodyWidth, bodyHeight);
-  });
-
-  const last = candles[candles.length - 1];
-  ctx.fillStyle = "#e2e8f0";
-  ctx.font = "600 12px Outfit, sans-serif";
-  ctx.textAlign = "left";
-  ctx.fillText(`${symbol} 1m`, pad.left + 4, 16);
-  ctx.fillStyle = Number(last.close) >= Number(last.open) ? "#10b981" : "#f43f5e";
-  ctx.textAlign = "right";
-  ctx.fillText(`Last ${money(last.close)}`, width - 10, 16);
-}
-
-function prepareCanvas(canvas) {
-  const ratio = window.devicePixelRatio || 1;
-  const width = canvas.clientWidth;
-  const height = canvas.clientHeight;
-  if (canvas.width !== Math.floor(width * ratio) || canvas.height !== Math.floor(height * ratio)) {
-    canvas.width = Math.floor(width * ratio);
-    canvas.height = Math.floor(height * ratio);
-  }
-  const ctx = canvas.getContext("2d");
-  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  return ctx;
 }
 
 function drawLineChart(canvas, points, label) {
@@ -482,6 +497,10 @@ async function refresh() {
 async function load() {
   state.catalog = await api("/api/strategy-catalog");
   renderCatalog();
+  
+  // Initialize TradingView chart
+  initChart();
+  
   await refresh();
 }
 
@@ -543,6 +562,58 @@ $("#strategy-form").addEventListener("submit", async (event) => {
     $(".live-panel").scrollIntoView({ behavior: "smooth" });
   } catch (error) {
     alert(`Failed to add strategy: ${error.message}`);
+  }
+});
+
+$("#history-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  const symbol = form.get("symbol").toUpperCase();
+  const resolution = form.get("resolution");
+  const limit = form.get("limit");
+
+  try {
+    const result = await api(`/api/candles/history?symbol=${symbol}&resolution=${resolution}&limit=${limit}`, {
+      method: "GET",
+    });
+
+    if (!result.candles || result.candles.length === 0) {
+      $("#history-result").innerHTML = `<p class="muted">No candles fetched for ${symbol}</p>`;
+      return;
+    }
+
+    // Display result
+    $("#history-result").innerHTML = `
+      <p class="success"><strong>${result.candles.length} candles</strong> fetched for ${symbol}</p>
+      <div style="max-height: 200px; overflow-y: auto; font-size: 11px;">
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+            <th style="text-align: left; padding: 4px;">Time (IST)</th>
+            <th style="text-align: right; padding: 4px;">O</th>
+            <th style="text-align: right; padding: 4px;">H</th>
+            <th style="text-align: right; padding: 4px;">L</th>
+            <th style="text-align: right; padding: 4px;">C</th>
+          </tr>
+          ${result.candles.slice(-10).reverse().map(c => `
+            <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+              <td style="padding: 4px;">${toIST(c.start)}</td>
+              <td style="text-align: right; padding: 4px;">${money(c.open, 2)}</td>
+              <td style="text-align: right; padding: 4px;">${money(c.high, 2)}</td>
+              <td style="text-align: right; padding: 4px;">${money(c.low, 2)}</td>
+              <td style="text-align: right; padding: 4px;">${money(c.close, 2)}</td>
+            </tr>
+          `).join('')}
+        </table>
+      </div>
+      <p class="success" style="margin-top: 8px; font-size: 11px;">Copy the JSON below to use in backtest:</p>
+      <textarea readonly rows="3" style="width: 100%; font-size: 10px; background: rgba(15,23,42,0.4); color: #e2e8f0; border: 1px solid rgba(255,255,255,0.1); padding: 4px; border-radius: 4px;">${JSON.stringify(result.candles)}</textarea>
+    `;
+
+    // Also populate backtest form with the candles
+    $("#backtest-form textarea[name='candles']").value = JSON.stringify(result.candles);
+
+  } catch (error) {
+    alert(`Failed to fetch historical candles: ${error.message}`);
   }
 });
 

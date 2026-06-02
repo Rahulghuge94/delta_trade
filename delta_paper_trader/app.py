@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from delta_paper_trader.backtest import run_backtest
 from delta_paper_trader.engine import PaperTradingEngine
+from delta_paper_trader.history import fetch_historical_candles
 from delta_paper_trader.strategy import strategy_catalog
 
 APP_DIR = Path(__file__).resolve().parent
@@ -80,5 +81,41 @@ async def delete_strategy(strategy_id: str) -> dict[str, Any]:
 async def backtest(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         return run_backtest(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/candles/history")
+async def get_historical_candles(
+    symbol: str,
+    resolution: str = "1",
+    limit: int = 100,
+) -> dict[str, Any]:
+    """
+    Fetch historical candles from Delta Exchange API.
+    
+    Query parameters:
+    - symbol: Trading symbol (e.g., "BTCUSD", "ETHUSD")
+    - resolution: Candle resolution in minutes (default "1" for 1-minute)
+    - limit: Number of candles to fetch (default 100)
+    """
+    try:
+        candles = await fetch_historical_candles(symbol, resolution, limit)
+        return {
+            "symbol": symbol,
+            "resolution": resolution,
+            "candles": [
+                {
+                    "symbol": c.symbol,
+                    "start": c.start,
+                    "open": str(c.open),
+                    "high": str(c.high),
+                    "low": str(c.low),
+                    "close": str(c.close),
+                    "volume": str(c.volume),
+                }
+                for c in candles
+            ],
+        }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -8,6 +8,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/styles.css" />
+    <!-- TradingView Lightweight Charts -->
+    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.min.js"></script>
   </head>
   <body>
     <!-- Premium background glowing gradients -->
@@ -157,6 +159,34 @@
           </button>
         </form>
 
+        <section class="panel history-panel">
+          <div class="panel-head">
+            <h2>Load Historical Candles</h2>
+            <p class="muted">Fetch initial candles from Delta Exchange API</p>
+          </div>
+          <form id="history-form">
+            <div class="grid">
+              <div class="input-group">
+                <label>Symbol</label>
+                <input name="symbol" value="BTCUSD" required />
+              </div>
+              <div class="input-group">
+                <label>Resolution (min)</label>
+                <input name="resolution" type="number" value="1" min="1" required />
+              </div>
+            </div>
+            <div class="input-group">
+              <label>Number of Candles</label>
+              <input name="limit" type="number" value="100" min="1" max="1000" required />
+            </div>
+            <button class="btn-secondary submit-btn" type="submit">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"></path></svg>
+              Fetch Candles
+            </button>
+          </form>
+          <div id="history-result" class="backtest-result"></div>
+        </section>
+
         <section class="panel backtest-panel">
           <div class="panel-head">
             <h2>Backtest Replay</h2>
@@ -193,11 +223,11 @@
             <div class="section-title compact">
               <div class="title-left">
                 <h2>Live Market Chart</h2>
-                <p class="muted">Closed and active 1m candles from the running feed</p>
+                <p class="muted">Closed and active 1m candles from the running feed (IST)</p>
               </div>
               <select id="chart-symbol" class="chart-select" aria-label="Chart symbol"></select>
             </div>
-            <canvas id="market-chart" height="260"></canvas>
+            <div id="market-chart-container" style="width: 100%; height: 400px; background: rgba(15, 23, 42, 0.25); border-radius: 12px; overflow: hidden;"></div>
           </section>
 
           <div class="section-title">

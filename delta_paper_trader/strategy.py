@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from decimal import Decimal
 from typing import Any
 
@@ -161,16 +161,16 @@ class EmaImpulseStrategy(Strategy):
     description = "Follows 1-minute candle EMA impulse when fast EMA separates from slow EMA."
 
     trade_quantity: Decimal = Decimal("1")
-    fast_span: int = 8
-    slow_span: int = 21
+    fast_window: int = 8
+    slow_window: int = 21
     min_spread_bps: Decimal = Decimal("2")
     ema_fast: dict[str, Decimal] = field(default_factory=dict)
     ema_slow: dict[str, Decimal] = field(default_factory=dict)
     last_bias: dict[str, str] = field(default_factory=dict)
 
     def generate_signal(self, candle: Candle, broker: PaperBroker) -> Signal:
-        fast = self._ema(self.ema_fast.get(candle.symbol), candle.close, self.fast_span)
-        slow = self._ema(self.ema_slow.get(candle.symbol), candle.close, self.slow_span)
+        fast = self._ema(self.ema_fast.get(candle.symbol), candle.close, self.fast_window)
+        slow = self._ema(self.ema_slow.get(candle.symbol), candle.close, self.slow_window)
         self.ema_fast[candle.symbol] = fast
         self.ema_slow[candle.symbol] = slow
 
@@ -301,9 +301,9 @@ class Ema9_100PullbackStrategy(Strategy):
     )
 
     trade_quantity: Decimal = Decimal("1")
-    # ── EMA spans ────────────────────────────────────────────────────────────
-    fast_span: int = 9
-    slow_span: int = 100
+    # ── EMA windows ──────────────────────────────────────────────────────────
+    fast_window: int = 9
+    slow_window: int = 100
     # ── Entry filters ────────────────────────────────────────────────────────
     # How close price must be to EMA 9 to qualify as a "pullback" (basis points
     # of the current close price).  80 bps ≈ $58 on a $72 700 BTC price.
@@ -331,8 +331,8 @@ class Ema9_100PullbackStrategy(Strategy):
         sym = candle.symbol
 
         # ── 1. Update EMAs ───────────────────────────────────────────────────
-        ema9 = self._ema(self.ema_fast.get(sym), candle.close, self.fast_span)
-        ema100 = self._ema(self.ema_slow.get(sym), candle.close, self.slow_span)
+        ema9 = self._ema(self.ema_fast.get(sym), candle.close, self.fast_window)
+        ema100 = self._ema(self.ema_slow.get(sym), candle.close, self.slow_window)
         self.ema_fast[sym] = ema9
         self.ema_slow[sym] = ema100
 
@@ -430,4 +430,9 @@ def build_strategy(
         strategy_cls = STRATEGY_TYPES[strategy_type]
     except KeyError as exc:
         raise ValueError(f"Unknown strategy type: {strategy_type}") from exc
-    return strategy_cls(**params)
+    
+    # Filter params to only include valid fields for this strategy class
+    valid_field_names = {f.name for f in fields(strategy_cls)}
+    filtered_params = {k: v for k, v in params.items() if k in valid_field_names}
+    
+    return strategy_cls(**filtered_params)
